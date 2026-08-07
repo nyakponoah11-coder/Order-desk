@@ -116,6 +116,7 @@
   .pill-processing{background:var(--cyan-soft);color:var(--cyan);}
   .pill-pending{background:var(--amber-soft);color:var(--amber);}
   .pill-failed, .pill-unknown{background:var(--red-soft);color:var(--red);}
+  .order-time{font-size:10px;color:var(--text-dim);font-family:'JetBrains Mono';}
 
   .empty, .loading{text-align:center;padding:50px 20px;color:var(--text-dim);font-size:13px;}
   .error-box{background:var(--red-soft);border:1px solid rgba(255,92,108,.25);border-radius:14px;padding:16px;color:var(--red);font-size:12px;font-family:'JetBrains Mono';line-height:1.7;white-space:pre-wrap;margin:6px 2px;}
@@ -170,9 +171,9 @@
 
   <div class="stats" id="statsRow">
     <div class="stat-card c-violet">
-      <div class="stat-label">Loaded</div>
+      <div class="stat-label">Today</div>
       <div class="stat-value mono" id="statOrders">—</div>
-      <div class="stat-sub">last 100</div>
+      <div class="stat-sub" id="statOrdersSub">of last 100</div>
     </div>
     <div class="stat-card c-green">
       <div class="stat-label">Completed</div>
@@ -198,6 +199,7 @@
     </div>
     <div class="segs" id="segs">
       <div class="seg active" data-filter="all">All</div>
+      <div class="seg" data-filter="today">Today</div>
       <div class="seg" data-filter="completed">Completed</div>
       <div class="seg" data-filter="processing">Processing</div>
       <div class="seg" data-filter="pending">Pending</div>
@@ -255,12 +257,31 @@ function pillClass(s){
 function pillLabel(s){ return s ? s.charAt(0).toUpperCase()+s.slice(1) : 'Unknown'; }
 function initials(phone){ const c=(phone||'').replace(/\D/g,''); return c ? c.slice(-2) : '??'; }
 function money(n){ const v=Number(n)||0; return 'GH₵'+v.toLocaleString('en-GH',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function timeAgo(ts){
+  if(!ts) return '';
+  const d = new Date(ts);
+  if(isNaN(d)) return '';
+  const mins = Math.floor((Date.now()-d.getTime())/60000);
+  if(mins<1) return 'just now';
+  if(mins<60) return mins+'m ago';
+  const h = Math.floor(mins/60);
+  if(h<24) return h+'h ago';
+  const days = Math.floor(h/24);
+  return days+'d ago';
+}
+function isToday(ts){
+  if(!ts) return false;
+  const d = new Date(ts);
+  if(isNaN(d)) return false;
+  const now = new Date();
+  return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth() && d.getDate()===now.getDate();
+}
 
 async function loadOrders(){
   document.getElementById('ledger').innerHTML = '<div class="loading">Loading orders…</div>';
   document.getElementById('feed').innerHTML = '<div class="loading">Loading…</div>';
 
-  const { data, error } = await supabase.from('orders').select('*').order('id',{ascending:false}).limit(100);
+  const { data, error } = await supabase.from('orders').select('*').order('created_at',{ascending:false,nullsFirst:false}).limit(100);
 
   if(error){
     setConn('err','Connection failed');
@@ -277,10 +298,12 @@ async function loadOrders(){
 }
 
 function renderStats(){
+  const todays = orders.filter(o=>isToday(o.created_at));
   const completed = orders.filter(o=>(o.status||'').toLowerCase()==='completed');
   const pending = orders.filter(o=>['pending','processing'].includes((o.status||'').toLowerCase()));
   const revenue = completed.reduce((s,o)=>s+(Number(o.amount)||0),0);
-  document.getElementById('statOrders').textContent = orders.length;
+  document.getElementById('statOrders').textContent = todays.length;
+  document.getElementById('statOrdersSub').textContent = `of ${orders.length} loaded`;
   document.getElementById('statPaid').textContent = completed.length;
   document.getElementById('paidRate').textContent = orders.length ? Math.round(completed.length/orders.length*100)+'%' : '—';
   document.getElementById('statPending').textContent = pending.length;
@@ -292,7 +315,8 @@ function renderLedger(filter){
   currentFilter = filter;
   const q = (document.getElementById('searchBox').value||'').toLowerCase().trim();
   let rows = orders.filter(o=>{
-    if(filter!=='all' && (o.status||'').toLowerCase()!==filter) return false;
+    if(filter==='today'){ if(!isToday(o.created_at)) return false; }
+    else if(filter!=='all' && (o.status||'').toLowerCase()!==filter) return false;
     if(q){
       const hay = `${o.phone_number||''} ${o.whatsapp_phone||''} ${o.ref||''}`.toLowerCase();
       if(!hay.includes(q)) return false;
@@ -317,6 +341,7 @@ function renderLedger(filter){
       <div class="order-right">
         <div class="order-amount">${money(o.amount)}</div>
         <span class="pill ${pillClass(o.status)}">${pillLabel(o.status)}</span>
+        ${o.created_at ? `<div class="order-time">${timeAgo(o.created_at)}</div>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -349,7 +374,7 @@ function renderFeed(){
       </div>
       <div style="flex:1">
         <div class="fe-bubble">${textFor(o)}</div>
-        <div class="fe-foot"><span class="fe-tag">${o.network||'Bot'}</span><span class="fe-id">#${o.id}</span></div>
+        <div class="fe-foot"><span class="fe-tag">${o.network||'Bot'}</span><span class="fe-id">${o.created_at ? timeAgo(o.created_at) : '#'+o.id}</span></div>
       </div>
     </div>`).join('');
 }
